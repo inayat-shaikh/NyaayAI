@@ -1,0 +1,577 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// User Roles Enum
+enum UserRole {
+  CITIZEN
+  POLICE
+  JUDGE
+  COURT_STAFF
+  ADMIN
+  LAWYER
+}
+
+// Case Status Enum
+enum CaseStatus {
+  DRAFT
+  FILED
+  UNDER_REVIEW
+  IN_PROGRESS
+  HEARING_SCHEDULED
+  ADJOURNED
+  JUDGMENT_RESERVED
+  COMPLETED
+  DISMISSED
+  TRANSFERRED
+}
+
+// FIR Status Enum
+enum FIRStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_INVESTIGATION
+  CHARGESHEET_FILED
+  CLOSED
+  TRANSFERRED
+}
+
+// Complaint Status Enum
+enum ComplaintStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  CONVERTED_TO_FIR
+  CLOSED
+}
+
+// Document Type Enum
+enum DocumentType {
+  ID_PROOF
+  ADDRESS_PROOF
+  EVIDENCE
+  LEGAL_DOCUMENT
+  CONTRACT
+  JUDGMENT
+  FIR_COPY
+  CHARGESHEET
+  MEDICAL_REPORT
+  PHOTOGRAPH
+  VIDEO
+  AUDIO
+  OTHER
+}
+
+// Court Type Enum
+enum CourtType {
+  DISTRICT_COURT
+  SESSIONS_COURT
+  HIGH_COURT
+  SUPREME_COURT
+  SPECIAL_COURT
+  TRIBUNAL
+}
+
+// Jurisdiction Level Enum
+enum JurisdictionLevel {
+  LOCAL
+  DISTRICT
+  STATE
+  NATIONAL
+}
+
+// Legal Question Category Enum
+enum LegalCategory {
+  CONSTITUTIONAL
+  CRIMINAL
+  CIVIL
+  FAMILY
+  PROPERTY
+  LABOR
+  TAXATION
+  CORPORATE
+  INTELLECTUAL_PROPERTY
+  ENVIRONMENTAL
+  CONSUMER
+  OTHER
+}
+
+// User Model with Role-Based Access Control
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  username      String?  @unique
+  password      String
+  name          String
+  phone         String?
+  role          UserRole
+  avatar        String?
+  isActive      Boolean  @default(true)
+  isVerified    Boolean  @default(false)
+  lastLoginAt   DateTime?
+  courtId       String?  // For Judge/Court Staff
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Profile specific fields based on role
+  profileData   Json?
+  
+  // Relations
+  profile       UserProfile?
+  court         Court?    @relation("CourtUsers", fields: [courtId], references: [id])
+  complaints    Complaint[]
+  firs          FIR[]
+  assignedFIRs  FIR[]     @relation("FIRAssignedOfficer")
+  cases         Case[]
+  assignedCases CaseAssignment[]
+  judgedCases   Case[]     @relation("CaseJudge")
+  hearings      Hearing[]
+  judgments     Judgment[]
+  legalQuestions LegalQuestion[]
+  documents     Document[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  sosRequests   LegalSOS[]
+  sosResponses  LegalSOS[] @relation("SOSResponder")
+  timelineEntries CaseTimeline[]
+  
+  @@map("users")
+}
+
+// User Profile Details
+model UserProfile {
+  id          String @id @default(cuid())
+  userId      String @unique
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Common fields
+  address     String?
+  city        String?
+  state       String?
+  pincode     String?
+  country     String? @default("India")
+  
+  // Role-specific fields
+  badgeNumber String?  // For Police
+  rank        String?  // For Police
+  barCouncilId String? // For Lawyers
+  specialization String? // For Lawyers
+  courtId     String?  // For Judge/Court Staff
+  designation String?  // For Judge/Court Staff
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("user_profiles")
+}
+
+// Court/Jurisdiction Information
+model Court {
+  id            String   @id @default(cuid())
+  name          String
+  type          CourtType
+  jurisdiction  JurisdictionLevel
+  address       String
+  city          String
+  state         String
+  pincode       String
+  phone         String?
+  email         String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  // Relations
+  cases         Case[]
+  users         User[]    @relation("CourtUsers")
+  
+  @@map("courts")
+}
+
+// Citizen Complaints
+model Complaint {
+  id            String         @id @default(cuid())
+  complaintId   String         @unique // Public-facing ID
+  title         String
+  description   String
+  category      LegalCategory
+  status        ComplaintStatus @default(DRAFT)
+  priority      String?        // LOW, MEDIUM, HIGH, URGENT
+  isAnonymous   Boolean        @default(false)
+  location      String?
+  incidentDate  DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  
+  // Relations
+  citizenId     String
+  citizen       User           @relation(fields: [citizenId], references: [id])
+  
+  fir           FIR?
+  case          Case?      @relation("CaseComplaint")
+  documents     Document[]
+  legalQuestions LegalQuestion[]
+  timeline      CaseTimeline[]
+  
+  @@map("complaints")
+}
+
+// FIR (First Information Report)
+model FIR {
+  id            String     @id @default(cuid())
+  firNumber     String     @unique
+  complaintId   String?    @unique
+  complaint     Complaint? @relation(fields: [complaintId], references: [id])
+  
+  title         String
+  description   String
+  status        FIRStatus  @default(DRAFT)
+  priority      String?    // LOW, MEDIUM, HIGH, URGENT
+  
+  // AI-recommended sections
+  recommendedSections Json?   // IPC/CrPC sections recommended by AI
+  finalSections       Json?   // Final sections after manual review
+  
+  // Location and jurisdiction
+  incidentLocation    String
+  policeStation       String
+  district            String
+  state               String
+  
+  // Dates
+  incidentDate        DateTime
+  filingDate          DateTime  @default(now())
+  investigationStartDate DateTime?
+  
+  // Relations
+  filedById           String
+  filedBy             User      @relation(fields: [filedById], references: [id])
+  
+  assignedOfficerId   String?
+  assignedOfficer     User?     @relation("FIRAssignedOfficer", fields: [assignedOfficerId], references: [id])
+  
+  case                Case?
+  documents           Document[]
+  timeline            CaseTimeline[]
+  
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  
+  @@map("firs")
+}
+
+// Court Cases
+model Case {
+  id            String     @id @default(cuid())
+  caseNumber    String     @unique
+  title         String
+  description   String
+  status        CaseStatus @default(DRAFT)
+  priority      String?    // LOW, MEDIUM, HIGH, URGENT
+  
+  // Case categorization
+  caseType      String     // CRIMINAL, CIVIL, etc.
+  category      LegalCategory
+  
+  // AI-assisted classification
+  aiClassification Json?
+  
+  // Jurisdiction
+  courtId       String
+  court         Court      @relation(fields: [courtId], references: [id])
+  
+  // Dates
+  filingDate    DateTime   @default(now())
+  hearingDate   DateTime?
+  judgmentDate  DateTime?
+  
+  // Relations
+  firId         String?    @unique
+  fir           FIR?       @relation(fields: [firId], references: [id])
+  
+  complaintId   String?    @unique
+  complaint     Complaint? @relation("CaseComplaint", fields: [complaintId], references: [id])
+  
+  filedById     String
+  filedBy       User       @relation(fields: [filedById], references: [id])
+  
+  judgeId       String?
+  judge         User?      @relation("CaseJudge", fields: [judgeId], references: [id])
+  
+  assignedLawyers CaseAssignment[]
+  documents     Document[]
+  timeline      CaseTimeline[]
+  hearings      Hearing[]
+  judgment      Judgment?
+  
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  
+  @@map("cases")
+}
+
+// Case Assignments (Lawyers, Officers, etc.)
+model CaseAssignment {
+  id          String   @id @default(cuid())
+  caseId      String
+  case        Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  
+  role        String   // LAWYER, PROSECUTOR, INVESTIGATING_OFFICER, etc.
+  assignedAt  DateTime @default(now())
+  assignedBy  String
+  isActive    Boolean  @default(true)
+  
+  @@unique([caseId, userId])
+  @@map("case_assignments")
+}
+
+// Hearings
+model Hearing {
+  id          String   @id @default(cuid())
+  caseId      String
+  case        Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  
+  hearingNumber Int    @default(1)
+  date        DateTime
+  time        DateTime
+  location    String?
+  purpose     String
+  status      String   @default("SCHEDULED") // SCHEDULED, IN_PROGRESS, COMPLETED, ADJOURNED
+  
+  notes       String?
+  nextDate    DateTime?
+  
+  judgeId     String
+  judge       User     @relation(fields: [judgeId], references: [id])
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("hearings")
+}
+
+// Judgment
+model Judgment {
+  id          String   @id @default(cuid())
+  caseId      String   @unique
+  case        Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  
+  title       String
+  summary     String
+  fullText    String
+  verdict     String   // GUILTY, NOT_GUILTY, PARTIALLY_GUILTY, DISMISSED, etc.
+  
+  // AI-generated judgment analysis
+  aiAnalysis  Json?
+  
+  judgmentDate DateTime @default(now())
+  
+  judgeId     String
+  judge       User     @relation(fields: [judgeId], references: [id])
+  
+  documents   Document[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("judgments")
+}
+
+// Legal Q&A
+model LegalQuestion {
+  id          String   @id @default(cuid())
+  question    String
+  answer      String?
+  category    LegalCategory
+  
+  // AI processing
+  aiResponse  Json?
+  confidence  Float?
+  
+  // Context
+  language    String   @default("en")
+  isVoice     Boolean  @default(false)
+  
+  // Relations
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  
+  complaintId String?
+  complaint   Complaint? @relation(fields: [complaintId], references: [id])
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("legal_questions")
+}
+
+// Documents and Evidence
+model Document {
+  id          String       @id @default(cuid())
+  filename    String
+  originalName String
+  filePath    String
+  fileSize    Int
+  mimeType    String
+  type        DocumentType
+  
+  // OCR processing
+  extractedText String?
+  aiAnalysis  Json?
+  
+  // Metadata
+  description String?
+  tags        String?
+  
+  // Relations
+  uploadedById String
+  uploadedBy   User       @relation(fields: [uploadedById], references: [id])
+  
+  complaintId  String?
+  complaint    Complaint? @relation(fields: [complaintId], references: [id])
+  
+  firId        String?
+  fir          FIR?       @relation(fields: [firId], references: [id])
+  
+  caseId       String?
+  case         Case?      @relation(fields: [caseId], references: [id])
+  
+  judgmentId   String?
+  judgment     Judgment?  @relation(fields: [judgmentId], references: [id])
+  
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  
+  @@map("documents")
+}
+
+// Case Timeline
+model CaseTimeline {
+  id          String   @id @default(cuid())
+  title       String
+  description String
+  status      String
+  timestamp   DateTime @default(now())
+  
+  // Entity references
+  complaintId String?
+  complaint   Complaint? @relation(fields: [complaintId], references: [id])
+  
+  firId       String?
+  fir         FIR?       @relation(fields: [firId], references: [id])
+  
+  caseId      String?
+  case        Case?      @relation(fields: [caseId], references: [id])
+  
+  userId      String?
+  user        User?      @relation(fields: [userId], references: [id])
+  
+  @@map("case_timeline")
+}
+
+// Notifications
+model Notification {
+  id          String   @id @default(cuid())
+  title       String
+  message     String
+  type        String   // INFO, WARNING, ERROR, SUCCESS
+  priority    String   @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  
+  isRead      Boolean  @default(false)
+  isDelivered Boolean  @default(false)
+  
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  
+  // Related entity
+  entityType  String?  // COMPLAINT, FIR, CASE, HEARING, etc.
+  entityId    String?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("notifications")
+}
+
+// Audit Logs for Compliance
+model AuditLog {
+  id          String   @id @default(cuid())
+  action      String
+  entityType  String
+  entityId    String
+  oldValues   Json?
+  newValues   Json?
+  
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  
+  ipAddress   String?
+  userAgent   String?
+  
+  createdAt   DateTime @default(now())
+  
+  @@map("audit_logs")
+}
+
+// Legal Knowledge Base (for AI)
+model LegalProvision {
+  id          String   @id @default(cuid())
+  section     String
+  title       String
+  description String
+  fullText    String
+  
+  category    LegalCategory
+  act         String   // IPC, CrPC, Constitution, etc.
+  chapter     String?
+  bailable    Boolean?
+  cognizable  Boolean?
+  
+  // AI embeddings
+  embedding   String?
+  
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("legal_provisions")
+}
+
+// Emergency Legal SOS
+model LegalSOS {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  
+  location    String?
+  latitude    Float?
+  longitude   Float?
+  
+  emergencyType String  // ARREST, ACCIDENT, DOMESTIC_VIOLENCE, etc.
+  description String?
+  status      String   @default("ACTIVE") // ACTIVE, RESOLVED, CANCELLED
+  
+  responderId String?
+  responder   User?     @relation("SOSResponder", fields: [responderId], references: [id])
+  
+  responseTime DateTime?
+  resolvedAt   DateTime?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("legal_sos")
+}
